@@ -5,11 +5,23 @@ see file Dockerfile in this git repository
 
 --- build docker image ---
 mzi@box ~/
+$ eval $(docker-machine env default --shell=bash)
+
+mzi@box ~/
 $ docker build -t testrpc_solc .
+
+$ docker images
+REPOSITORY                                      TAG                 IMAGE ID            CREATED             VIRTUAL SIZE
+testrpc_solc                                    latest              d24ca6a8a2a7        13 days ago         602.5 MB
 
 --- start container ---
 mzi@box ~/
 $ docker run -it -p 8545:8545 -d testrpc_solc
+
+mzi@box ~/
+$ docker ps
+CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS                    NAMES
+eb1bc60fb600        testrpc_solc        "testrpc"           13 days ago         Up 13 days          0.0.0.0:8545->8545/tcp   goofy_mc
 
 --- test container using both testrpc + solc ---
 mzi@box ~/
