@@ -7,8 +7,11 @@ see file Dockerfile in this git repository
 mzi@box ~/
 $ eval $(docker-machine env default --shell=bash)
 
+// change to directory that contains the Dockerfile
 mzi@box ~/
 $ docker build -t testrpc_solc .
+
+// if docker build fails: restart the vm box and the docker deamon and try again 
 
 $ docker images
 REPOSITORY                                      TAG                 IMAGE ID            CREATED             VIRTUAL SIZE
@@ -34,3 +37,31 @@ b565b60408051918252519081900360200190f35b600781025b91905056","info":{"source":"p
 turn a * 7; } }","language":"Solidity","languageVersion":"0.4.6+commit.2dabbdf0.Emscripten.clang","compilerVersion":"0.4.6+commit.2dabbdf0.Emscripten.clang","abiDefi
 nition":[{"constant":false,"inputs":[{"name":"a","type":"uint256"}],"name":"multiply","outputs":[{"name":"d","type":"uint256"}],"payable":false,"type":"function"}],"
 userDoc":{"methods":{}},"developerDoc":{"methods":{}}}}}
+
+--- test container using both testrpc and web3 javascript api
+
+mzi@box ~/
+$ docker ps
+CONTAINER ID        IMAGE
+b5c770d21bca        testrpc_solc
+
+// enter running testrpc_solc container
+mzi@box ~/
+docker exec -it b5c770d21bca bash 
+
+// in bash shell inside container: add node (should already be in the container though. TODO: check what's wrong ...)
+root@b5c770d21bca:/# npm install web3
+
+// start node from bash console
+root@b5c770d21bca:/# node
+
+// in node console: play around with web3 javascript api
+var Web3 = require('web3');
+var web3 = new Web3();
+web3.setProvider(new web3.providers.HttpProvider('http://localhost:8545'));
+console.log(web3.isConnected());
+console.log(web3.fromWei(web3.eth.gasPrice, 'wei').toString());
+console.log(web3.eth.accounts);
+console.log(web3.eth.coinbase);
+console.log(web3.fromWei(web3.eth.getBalance(web3.eth.coinbase), 'wei').toString());
+console.log(web3.fromWei(web3.eth.getBalance(web3.eth.coinbase), 'ether').toString());

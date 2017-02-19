@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
 import org.apache.http.HttpEntity;
@@ -25,7 +26,9 @@ import org.apache.http.impl.client.HttpClients;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
@@ -80,9 +83,6 @@ public class AppTest {
 
 	public static final String MULTIPLY_CONTRACT_COMPILED = "0x6060604052346000575b60458060156000396000f3606060405260e060020a6000350463c6888fa18114601c575b6000565b346000576029600435603b565b60408051918252519081900360200190f35b600781025b91905056";
 
-	// TODO verify transaction greet
-	// TODO verify transaction kill
-
 	/**
 	 * greeter contract inspired by
 	 * https://www.ethereum.org/greeter
@@ -122,6 +122,9 @@ public class AppTest {
 
 	private static Web3j web3 = null;
 	private static boolean setupFailed = false;
+
+	@Rule
+	public final ExpectedException exception = ExpectedException.none();
 
 	@BeforeClass
 	public static void setUp() {
@@ -183,8 +186,16 @@ public class AppTest {
 
 	/**
 	 * check coinbase has some funds.
-	 * may be verified against web3 value as follows:
-	 * console.log(web3.fromWei(web3.eth.getBalance('0x1bf8803b27d0886ca6dbf8a7e18388b3ad4378e0'), "wei").toString());
+	 * may be verified against web3 value in node as follows:
+	 * var Web3 = require('web3');
+	 * var web3 = new Web3();
+	 * web3.setProvider(new web3.providers.HttpProvider('http://localhost:8545'));
+	 * console.log(web3.isConnected());
+	 * console.log(web3.fromWei(web3.eth.gasPrice, 'wei').toString());
+	 * console.log(web3.eth.accounts);
+	 * console.log(web3.eth.coinbase);
+	 * console.log(web3.fromWei(web3.eth.getBalance(web3.eth.coinbase), 'wei').toString());
+	 * console.log(web3.fromWei(web3.eth.getBalance(web3.eth.coinbase), 'ether').toString());
 	 */
 	@Test
 	public void verifyCoinbaseBalance() throws Exception {
@@ -293,28 +304,69 @@ public class AppTest {
 
 		final String MESSAGE = "hello world";
 
-		// make sure the contract owner has sufficient funds to deploy the contract
+
+		// move funds to contract owner (amount in wei) to deploy the contract
 		String coinbase = getAccount(0);
-		transferEther(coinbase, SampleKeys.ADDRESS, GAS_PRICE_DEFAULT.multiply(BigInteger.valueOf(1_500_000)));
+		String contractOwnerAdress = SampleKeys.ADDRESS;
+		System.out.println("contract owner balance (initial): " + getBalance(contractOwnerAdress));
 
-		// parameters for contract deploy
+		BigInteger amount = GAS_PRICE_DEFAULT.multiply(BigInteger.valueOf(1_500_000));
+		transferEther(coinbase, contractOwnerAdress, amount);
+		System.out.println("contract owner balance (pre-deploy): " + getBalance(contractOwnerAdress));
+
+		// deploy the contract with the owner's credentials
 		Credentials credentials = SampleKeys.CREDENTIALS;
+		BigInteger deployGasLimit = BigInteger.valueOf(300_000);
+		BigInteger contractFundingAmount = BigInteger.valueOf(0); // BigInteger.valueOf(123_456); doesn't work as amount, TODO is this a testrpc thing? 
 		Utf8String greeting = new Utf8String(MESSAGE);
-
-		// TODO check if we can fund contract with value parameter (=amount?)
-		Future<Greeter> contractFuture = Greeter.deploy(web3, credentials, GAS_PRICE_DEFAULT, BigInteger.valueOf(300_000), BigInteger.valueOf(0), greeting);
+		Future<Greeter> contractFuture = Greeter.deploy(web3, credentials, GAS_PRICE_DEFAULT, deployGasLimit, contractFundingAmount, greeting);
 		Greeter contract = contractFuture.get();
+		System.out.println("contract owner balance (post-deploy): " + getBalance(contractOwnerAdress));
 
+		// get contract address (after deploy)
 		Assert.assertNotNull(contract);
-		Assert.assertTrue("contract address does not start with '0x'", contract.getContractAddress().startsWith("0x"));
+		String contractAddress = contract.getContractAddress(); 
+		Assert.assertTrue("contract address does not start with '0x'", contractAddress.startsWith("0x"));
+		System.out.println("contract address balance (initial): " + getBalance(contractAddress));
 
+		// move some funds to contract
+		contractFundingAmount = BigInteger.valueOf(123_456);
+		transferEther(coinbase, contractAddress, contractFundingAmount);
+		Assert.assertEquals("contract address failed to receive proper amount of funds", contractFundingAmount, getBalance(contractAddress));
+		System.out.println("contract address balance (after transfer): " + getBalance(contractAddress));
+		System.out.println("contract owner balance (after transfer): " + getBalance(contractOwnerAdress));
+
+		// call contract method greet()
 		Future<Utf8String> messageFuture = contract.greet();
 		Utf8String message = messageFuture.get();
-
 		Assert.assertNotNull(message);
 		Assert.assertEquals("wrong message returned", MESSAGE, message.toString());
+		System.out.println("contract.greet(): " + message.toString());
+		System.out.println("contract address balance (after greet): " + getBalance(contractAddress));
 
-		// TODO add call to kill contract (and check if funds are returned to contract owner)
+		// kill contract
+		BigInteger ownerBalanceBeforeKill = getBalance(contractOwnerAdress);
+		Future<TransactionReceipt> txReceiptFuture = contract.kill();
+		TransactionReceipt txReceipt = txReceiptFuture.get();
+		Assert.assertNotNull(txReceipt);
+		BigInteger ownerBalanceAfterKill = getBalance(contractOwnerAdress);
+		BigInteger killFees = txReceipt.getCumulativeGasUsed().multiply(GAS_PRICE_DEFAULT);
+		System.out.println("gas used (cumulative): " + txReceipt.getCumulativeGasUsed() + " kill fees: " + killFees);
+
+		Assert.assertEquals("bad contract owner balance after killing contract", ownerBalanceAfterKill, ownerBalanceBeforeKill.add(contractFundingAmount).subtract(killFees));
+		System.out.println("contract address balance (after kill): " + getBalance(contractAddress));
+		System.out.println("contract owner balance (after kill): " + getBalance(contractOwnerAdress));
+
+		// try to run greet again (expect ExecutionException)
+		exception.expect(ExecutionException.class);		
+		messageFuture = contract.greet();
+		try {
+			message = messageFuture.get();
+		}
+		catch(Exception e) {
+			System.out.println("ok case: failed to call greet() on killed contract: " + e);
+			throw e;
+		}
 	}
 
 	@Test
@@ -416,10 +468,16 @@ public class AppTest {
 	}
 
 	private BigInteger hasWeis(String address, BigInteger minWeiAmount) throws Exception{
+		return hasWeis(address, minWeiAmount, false);
+	}
+
+	private BigInteger hasWeis(String address, BigInteger minWeiAmount, boolean sysout) throws Exception{
 		EthGetBalance balanceResponse = web3.ethGetBalance(address, DefaultBlockParameterName.LATEST).sendAsync().get();
 		BigInteger balance = balanceResponse.getBalance();
 
-		System.out.println(String.format("balance: %d account: %s" , balance, address));
+		if(sysout) {
+			System.out.println(String.format("balance: %d account: %s" , balance, address));
+		}
 
 		Assert.assertTrue(String.format("not enough weis, expected at least %d, available %d for address %s", minWeiAmount, balance, address), balance.compareTo(minWeiAmount) >= 0);
 
@@ -653,6 +711,10 @@ public class AppTest {
 
 	private BigInteger getBalance(String address) throws Exception {
 		return hasWeis(address, new BigInteger("0"));
+	}
+
+	private BigInteger getBalance(String address, boolean sysout) throws Exception {
+		return hasWeis(address, new BigInteger("0"), sysout);
 	}
 
 	private String getAccount(int i) throws Exception {
