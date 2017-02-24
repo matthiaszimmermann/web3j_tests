@@ -26,6 +26,19 @@ $ docker ps
 CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS                    NAMES
 eb1bc60fb600        testrpc_solc        "testrpc"           13 days ago         Up 13 days          0.0.0.0:8545->8545/tcp   goofy_mc
 
+--- check container and installed components
+mzi@box ~/
+$ docker exec -it <container-id> bash
+
+root@<container-id>:/# node -v
+v6.9.5
+root@<container-id>:/# npm list -g --depth=0
+/usr/lib
++-- ethereumjs-testrpc@3.0.3
++-- npm@3.10.10
++-- solc@0.4.9
+`-- web3@0.18.2
+
 --- test container using both testrpc + solc ---
 mzi@box ~/
 $ curl -X POST --data '{"jsonrpc":"2.0","method":"eth_compileSolidity","params":["pragma solidity ^0.4.0; contract test { function multiply(uint a) returns(uint d) { return a * 7; } }"],"id":1}' <ip-of-your-docker-box>:8545

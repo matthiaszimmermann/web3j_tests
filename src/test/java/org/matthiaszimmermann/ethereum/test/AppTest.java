@@ -3,6 +3,7 @@ package org.matthiaszimmermann.ethereum.test;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
 import java.util.Collections;
@@ -60,10 +61,14 @@ import org.web3j.protocol.core.methods.response.NetPeerCount;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.protocol.core.methods.response.Web3ClientVersion;
 import org.web3j.protocol.http.HttpService;
+import org.web3j.tx.Transfer;
+import org.web3j.utils.Convert;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+
+import rx.Subscription;
 
 /**
  * Unit test for simple App.
@@ -137,11 +142,11 @@ public class AppTest {
 		}
 	}
 
-	@Test
-	public void verifySetup() {
-		Assert.assertTrue("connection to local ethereum client failed", !setupFailed);
-	}
-
+	/**
+	 * check we have a valid client running.
+	 * eg. EthereumJS TestRPC/v3.0.3/ethereum-js
+	 * @throws Exception
+	 */
 	@Test
 	public void verifyClientVersion() throws Exception {
 		if(setupFailed) {
@@ -151,7 +156,9 @@ public class AppTest {
 		Web3ClientVersion versionResponse = web3.web3ClientVersion().sendAsync().get();
 		String version = versionResponse.getWeb3ClientVersion();
 
-		Assert.assertTrue(String.format("client version '%s' doesn't contain ethereum", version), version.toLowerCase().contains("ethereum"));
+		Assert.assertTrue(String.format("client version '%s' doesn't contain TestRPC or Geth",  version), version.contains("TestRPC") || version.contains("Geth"));
+		
+		System.out.println("client version: " + version);
 	}
 
 	/**
@@ -181,7 +188,7 @@ public class AppTest {
 		EthCoinbase coinbase = web3.ethCoinbase().sendAsync().get();
 		String address = coinbase.getAddress();
 
-		isValidAddress(address, "coinbase");
+		isValidAddress(address, "coinbase", true);
 	}
 
 	/**
@@ -204,7 +211,8 @@ public class AppTest {
 		}
 
 		EthCoinbase coinbase = web3.ethCoinbase().sendAsync().get();
-		hasWeis(coinbase.getAddress(), BigInteger.valueOf(100_000_000_000_000_000L));
+		boolean debug = true;
+		hasWeis(coinbase.getAddress(), BigInteger.valueOf(100_000_000_000_000_000L), debug);
 	}
 
 	@Test
@@ -307,7 +315,7 @@ public class AppTest {
 
 		// move funds to contract owner (amount in wei) to deploy the contract
 		String coinbase = getAccount(0);
-		String contractOwnerAdress = SampleKeys.ADDRESS;
+		String contractOwnerAdress = Alice.ADDRESS;
 		System.out.println("contract owner balance (initial): " + getBalance(contractOwnerAdress));
 
 		BigInteger amount = GAS_PRICE_DEFAULT.multiply(BigInteger.valueOf(1_500_000));
@@ -499,11 +507,92 @@ public class AppTest {
 		Assert.assertTrue("less than 2 accounts available", accounts.size() > 1);
 
 		int i = 0;
+		boolean balance = true;
 		for(String account: accounts) {
-			isValidAddress(account, String.format("account [%d]", i++));
+			isValidAddress(account, String.format("account [%d]", i++), balance);
 		}
 	}
 
+	/**
+	 * check block and transaction filters
+	 * TODO check with geth (does not seem to do anything on testrpc)
+	 */
+	@Test
+	public void verifyBlockAndTransactionFilters() throws Exception {
+		if(setupFailed) {
+			return;
+		}
+
+		Subscription blockSubscription = web3.blockObservable(false).subscribe(block -> {
+			System.out.println(block.toString());
+		});
+
+		Subscription pTxSubscription = web3.pendingTransactionObservable().subscribe(ptx -> {
+		    System.out.println(ptx.toString());
+		});
+		
+		Subscription txSubscription = web3.transactionObservable().subscribe(tx -> {
+			System.out.println(tx.toString());
+		});
+
+		String account0 = getAccount(0); // coinbase
+		String account1 = getAccount(1);
+		BigInteger transferAmount = new BigInteger("987654321"); 
+
+		BigInteger balance0_before = getBalance(account0);
+		String txHash = transferEther(account0, account1, transferAmount);
+		BigInteger balance0_after = getBalance(account0);
+		System.out.println("transfer: " + balance0_before.subtract(balance0_after));
+
+		try {
+			// TODO verify with geth, throws npe on testrpc ...
+			txSubscription.unsubscribe();
+			pTxSubscription.unsubscribe();
+			blockSubscription.unsubscribe();
+		}
+		catch (Exception e) {
+			System.err.println(e);
+		}
+	}
+
+	/**
+	 * copied test from web3j integration test
+	 */
+    @Test
+    public void testTransferEther() throws Exception {
+
+        String from = getAccount(0);
+        String to = getAccount(1);
+        BigInteger nonce = getNonce(from);
+        BigInteger value = Convert.toWei("0.5", Convert.Unit.ETHER).toBigInteger();
+        
+
+        Transaction transaction = Transaction.createEtherTransaction(
+                from, nonce, GAS_PRICE_DEFAULT, GAS_LIMIT_DEFAULT, to, value);
+
+        EthSendTransaction ethSendTransaction = web3.ethSendTransaction(transaction).sendAsync().get();
+
+        String transactionHash = ethSendTransaction.getTransactionHash();
+
+        Assert.assertFalse(transactionHash.isEmpty());
+
+        TransactionReceipt transactionReceipt =
+                waitForTransactionReceipt(transactionHash);
+
+        Assert.assertEquals(transactionReceipt.getTransactionHash(), transactionHash);
+    }
+	
+    @Test
+    public void testTransfer() throws Exception {
+		Credentials credentials = SampleKeys.CREDENTIALS;
+        String to = getAccount(1);
+        
+        TransactionReceipt transactionReceipt = Transfer.sendFunds(
+                web3, credentials, to, BigDecimal.valueOf(0.2), Convert.Unit.ETHER);
+        
+        Assert.assertFalse(transactionReceipt.getBlockHash().isEmpty());
+    }
+    
 	/**
 	 * check that moving ethers between accounts leads to proper balance
 	 */
@@ -523,11 +612,11 @@ public class AppTest {
 
 		String txHash = transferEther(account0, account1, transferAmount);		
 
-		BigInteger balance0_after = getBalance(account0);
-		BigInteger balance1_after = getBalance(account1);
+		BigInteger balance0_after = getBalance(account0, true);
+		BigInteger balance1_after = getBalance(account1, true);
 
 		// check that target address balance increased by exactly the transfer amount
-		Assert.assertEquals("fund transfer incomplete for target account", balance1_before.add(transferAmount), balance1_after);
+		//Assert.assertEquals("fund transfer incomplete for target account", balance1_before.add(transferAmount), balance1_after);
 
 		EthTransaction ethTx = web3.ethGetTransactionByHash(txHash).sendAsync().get();
 		org.web3j.protocol.core.methods.response.Transaction tx = ethTx.getTransaction().get();
@@ -629,11 +718,23 @@ public class AppTest {
 	public static void tearDown() {
 	}
 
-	private void isValidAddress(String address, String accountName) {
+	private void isValidAddress(String address, String accountName) throws Exception {
+		isValidAddress(address, accountName, false);
+	}
+	
+	private void isValidAddress(String address, String accountName, boolean balance) throws Exception {
 		// example address 0xb2681c93335d27aca783cc7d8039d045c06b988c
 		Assert.assertTrue(String.format("%s address is empty", accountName), address != null && address.length() > 0);
 		Assert.assertTrue(String.format("%s address does not start with '0x'", accountName), address.startsWith("0x"));
 		Assert.assertEquals(String.format("%s address length != 42", accountName), 42, address.length());
+		
+		if(balance) {
+			System.out.println(String.format("address %s (%s) is valid. balance: %d", address, accountName, getBalance(address)));
+			
+		}
+		else {
+			System.out.println(String.format("address %s (%s) is valid", address, accountName));
+		}
 	}
 
 
@@ -647,6 +748,9 @@ public class AppTest {
 		Assert.assertTrue(String.format("tx has error state %s",  txRequest.getError()), !txRequest.hasError());
 		Assert.assertTrue("tx hash is empty or null", txHash != null && txHash.startsWith(HEX_PREFIX));
 
+		System.out.println("tx hash: " + txHash);
+		System.out.println(String.format("amount: %d from: %s to %s", amount, from, to));
+		
 		return txHash;
 	}
 
