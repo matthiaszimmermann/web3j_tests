@@ -237,9 +237,10 @@ public class AppTest {
 		EthGetCompilers compilerResponse = web3.ethGetCompilers().sendAsync().get();
 		List<String> compiler = compilerResponse.getCompilers();
 
-		compiler.stream().forEach(c -> System.out.println("web3 compiler[] " + c));
+		System.out.println("ethGetCompilers");
+		compiler.stream().forEach(c -> System.out.println("- " + c));
 
-		Assert.assertTrue("access to solidity compiler missing", compiler.contains("solidity"));
+		Assert.assertTrue("Access to solidity compiler missing", compiler.contains("solidity") || compiler.contains("Solidity"));
 	}
 
 	@Test
@@ -388,7 +389,6 @@ public class AppTest {
 		BigInteger gasPrice = GAS_PRICE_DEFAULT;
 		String compiledContract = MULTIPLY_CONTRACT_COMPILED;
 
-		// TODO consider to work with raw transaction + offline tx handling
 		// BigInteger gasLimit = GAS_LIMIT_DEFAULT;
 		// BigInteger value = BigInteger.ZERO;
 		// RawTransaction rawTransaction = RawTransaction.createContractTransaction(nonce, gasPrice, gasLimit, value, compiledContract);

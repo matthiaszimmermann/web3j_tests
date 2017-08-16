@@ -6,9 +6,16 @@ MAINTAINER Matthias Zimmermann <matthias.zimmermann@bsi-software.com>
 # windows workaround to ensure access to internet from within container
 RUN echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
+# basics
 RUN \
   apt-get update && apt-get upgrade -q -y && \
-  apt-get install -y --no-install-recommends git make gcc libc6-dev curl ca-certificates
+  apt-get install -y --no-install-recommends git make gcc libc6-dev curl ca-certificates software-properties-common
+
+# get solc (solidity compiler binary)
+RUN \
+  add-apt-repository ppa:ethereum/ethereum && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends solc
 
 # install go
 ENV GOLANG_VERSION 1.7.5
@@ -26,7 +33,7 @@ ENV PATH=${PATH}:${GOROOT}/bin:${GOPATH}/bin
 
 # clone geth
 RUN \
-  git clone --depth 1 https://github.com/ethereum/go-ethereum
+  git clone -b release/1.5 --depth 1 https://github.com/ethereum/go-ethereum
 
 # patch geth sources to minimize mining time according to
 # http://ethereum.stackexchange.com/questions/11407/minimize-mining-times-for-private-blockchain
@@ -60,4 +67,4 @@ EXPOSE 8545
 EXPOSE 30303
 
 ENTRYPOINT ["/geth"]
-CMD ["--password","LocalPassword.txt","--unlock","0","--mine","--rpc","--rpcaddr","'0.0.0.0'","--nodiscover","--maxpeers","0"]
+CMD ["--password","LocalPassword.txt","--unlock","0","--mine","--rpc","--rpcaddr","0.0.0.0","--maxpeers","0","--nodiscover"]

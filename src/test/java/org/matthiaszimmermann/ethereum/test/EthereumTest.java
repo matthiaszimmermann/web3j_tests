@@ -117,9 +117,13 @@ public class EthereumTest {
 		
 		System.out.println(String.format("insufficient funds. transfer %d to %s from coinbase", missingAmount, address));
 		
-		String txHash = transferEther(getCoinbase(), address, missingAmount); 
-
+		transferFunds(address, missingAmount);
+	}
+	
+	String transferFunds(String address, BigInteger amount) throws Exception {
+		String txHash = transferEther(getCoinbase(), address, amount); 
 		waitForTransactionReceipt(txHash);
+		return txHash;
 	}
 
 	BigInteger getBalance(String address) throws Exception {
@@ -133,6 +137,9 @@ public class EthereumTest {
 				from, nonce, GAS_PRICE, GAS_LIMIT, to, amount);
 
 		EthSendTransaction ethSendTransaction = web3j.ethSendTransaction(transaction).sendAsync().get();
+		
+		// TODO remove
+		System.out.println("transferEther. nonce: " + nonce + " amount: " + amount + " to: " + to);
 
 		return ethSendTransaction.getTransactionHash();
 	}

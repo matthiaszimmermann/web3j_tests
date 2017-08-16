@@ -24,7 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/logger/glog"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/pow"
 	"gopkg.in/fatih/set.v0"
@@ -169,7 +169,7 @@ func (v *BlockValidator) VerifyUncles(block, parent *types.Block) error {
 			for h := range ancestors {
 				branch += fmt.Sprintf("  O - %x\n  |\n", h)
 			}
-			log.Info(fmt.Sprint(branch))
+			glog.Infoln(branch)
 			return UncleError("uncle[%d](%x) is ancestor", i, hash[:4])
 		}
 
@@ -204,7 +204,7 @@ func (v *BlockValidator) ValidateHeader(header, parent *types.Header, checkPow b
 //
 // See YP section 4.3.4. "Block Header Validity"
 func ValidateHeader(config *params.ChainConfig, pow pow.PoW, header *types.Header, parent *types.Header, checkPow, uncle bool) error {
-	if uint64(len(header.Extra)) > params.MaximumExtraDataSize {
+	if big.NewInt(int64(len(header.Extra))).Cmp(params.MaximumExtraDataSize) == 1 {
 		return fmt.Errorf("Header extra data too long (%d)", len(header.Extra))
 	}
 
@@ -262,6 +262,8 @@ func ValidateHeader(config *params.ChainConfig, pow pow.PoW, header *types.Heade
 // CalcDifficulty is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
+// FIX for local + private chain. don't check hashrate, keep difficulty constant
+// http://ethereum.stackexchange.com/questions/11407/minimize-mining-times-for-private-blockchain
 func CalcDifficulty(config *params.ChainConfig, time, parentTime uint64, parentNumber, parentDiff *big.Int) *big.Int {
 	return big.NewInt(1)
 }

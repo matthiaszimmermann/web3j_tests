@@ -33,7 +33,7 @@ public class TransferEtherTest extends EthereumTest {
         BigInteger normalTxGasLimit = BigInteger.valueOf(21_000);
 
         // this is the method to test here
-Transaction transaction = Transaction.createEtherTransaction(
+        Transaction transaction = Transaction.createEtherTransaction(
                 from, nonce, GAS_PRICE, normalTxGasLimit, to, amount);
 
         EthSendTransaction ethSendTx = web3j.ethSendTransaction(transaction).sendAsync().get();
@@ -69,7 +69,7 @@ Transaction transaction = Transaction.createEtherTransaction(
     }
 
 	@Test
-	public void verifyTransactionAndBlockAttributes() throws Exception {
+	public void testTransactionAndBlockAttributes() throws Exception {
 		String account0 = getCoinbase();
 		String account1 = getAccount(1);
 		BigInteger transferAmount = new BigInteger("3141592653");

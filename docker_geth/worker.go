@@ -32,7 +32,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/logger"
+	"github.com/ethereum/go-ethereum/logger/glog"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/pow"
 	"gopkg.in/fatih/set.v0"
@@ -277,7 +278,7 @@ func (self *worker) wait() {
 
 			if self.fullValidation {
 				if _, err := self.chain.InsertChain(types.Blocks{block}); err != nil {
-					log.Error(fmt.Sprint("mining err", err))
+					glog.V(logger.Error).Infoln("mining err", err)
 					continue
 				}
 				go self.mux.Post(core.NewMinedBlockEvent{Block: block})
@@ -285,19 +286,19 @@ func (self *worker) wait() {
 				work.state.Commit(self.config.IsEIP158(block.Number()))
 				parent := self.chain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 				if parent == nil {
-					log.Error(fmt.Sprint("Invalid block found during mining"))
+					glog.V(logger.Error).Infoln("Invalid block found during mining")
 					continue
 				}
 
 				auxValidator := self.eth.BlockChain().AuxValidator()
 				if err := core.ValidateHeader(self.config, auxValidator, block.Header(), parent.Header(), true, false); err != nil && err != core.BlockFutureErr {
-					log.Error(fmt.Sprint("Invalid header on mined block:", err))
+					glog.V(logger.Error).Infoln("Invalid header on mined block:", err)
 					continue
 				}
 
 				stat, err := self.chain.WriteBlock(block)
 				if err != nil {
-					log.Error(fmt.Sprint("error writing block to chain", err))
+					glog.V(logger.Error).Infoln("error writing block to chain", err)
 					continue
 				}
 
@@ -333,7 +334,7 @@ func (self *worker) wait() {
 						self.mux.Post(logs)
 					}
 					if err := core.WriteBlockReceipts(self.chainDb, block.Hash(), block.NumberU64(), receipts); err != nil {
-						log.Warn(fmt.Sprint("error writing block receipts:", err))
+						glog.V(logger.Warn).Infoln("error writing block receipts:", err)
 					}
 				}(block, work.state.Logs(), work.receipts)
 			}
@@ -424,9 +425,11 @@ func (self *worker) commitNewWork() {
 		tstamp = parent.Time().Int64() + 1
 	}
 	// this will ensure we're not going off too far in the future
+    // FIX for local + private chain. annoying 5 seconds pauses in mining process
+    // http://ethereum.stackexchange.com/questions/11407/minimize-mining-times-for-private-blockchain
 	if now := time.Now().Unix(); tstamp > now {
 		wait := time.Duration(tstamp-now) * time.Second
-		log.Info(fmt.Sprint("We are too far in the future. Waiting for", wait))
+		glog.V(logger.Info).Infoln("We are too far in the future. Waiting for", wait)
 		time.Sleep(wait)
 	}
 
@@ -457,7 +460,7 @@ func (self *worker) commitNewWork() {
 	// Could potentially happen if starting to mine in an odd state.
 	err := self.makeCurrent(parent, header)
 	if err != nil {
-		log.Info(fmt.Sprint("Could not create new env for mining, retrying on next block."))
+		glog.V(logger.Info).Infoln("Could not create new env for mining, retrying on next block.")
 		return
 	}
 	// Create the current work task and check any fork transitions needed
@@ -468,7 +471,7 @@ func (self *worker) commitNewWork() {
 
 	pending, err := self.eth.TxPool().Pending()
 	if err != nil {
-		log.Error(fmt.Sprintf("Could not fetch pending transactions: %v", err))
+		glog.Errorf("Could not fetch pending transactions: %v", err)
 		return
 	}
 
@@ -488,12 +491,13 @@ func (self *worker) commitNewWork() {
 			break
 		}
 		if err := self.commitUncle(work, uncle.Header()); err != nil {
-			log.Trace(fmt.Sprintf("Bad uncle found and will be removed (%x)\n", hash[:4]))
-			log.Trace(fmt.Sprint(uncle))
-
+			if glog.V(logger.Ridiculousness) {
+				glog.V(logger.Detail).Infof("Bad uncle found and will be removed (%x)\n", hash[:4])
+				glog.V(logger.Detail).Infoln(uncle)
+			}
 			badUncles = append(badUncles, hash)
 		} else {
-			log.Debug(fmt.Sprintf("committing %x as uncle\n", hash[:4]))
+			glog.V(logger.Debug).Infof("committing %x as uncle\n", hash[:4])
 			uncles = append(uncles, uncle.Header())
 		}
 	}
@@ -512,7 +516,7 @@ func (self *worker) commitNewWork() {
 
 	// We only care about logging if we're actually mining.
 	if atomic.LoadInt32(&self.mining) == 1 {
-		log.Info(fmt.Sprintf("commit new work on block %v with %d txs & %d uncles. Took %v\n", work.Block.Number(), work.tcount, len(uncles), time.Since(tstart)))
+		glog.V(logger.Info).Infof("commit new work on block %v with %d txs & %d uncles. Took %v\n", work.Block.Number(), work.tcount, len(uncles), time.Since(tstart))
 		self.unconfirmed.Shift(work.Block.NumberU64() - 1)
 	}
 	self.push(work)
@@ -552,7 +556,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 		// Check whether the tx is replay protected. If we're not in the EIP155 hf
 		// phase, start ignoring the sender until we do.
 		if tx.Protected() && !env.config.IsEIP155(env.header.Number) {
-			log.Trace(fmt.Sprintf("Transaction (%x) is replay protected, but we haven't yet hardforked. Transaction will be ignored until we hardfork.\n", tx.Hash()))
+			glog.V(logger.Detail).Infof("Transaction (%x) is replay protected, but we haven't yet hardforked. Transaction will be ignored until we hardfork.\n", tx.Hash())
 
 			txs.Pop()
 			continue
@@ -561,7 +565,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 		// Ignore any transactions (and accounts subsequently) with low gas limits
 		if tx.GasPrice().Cmp(gasPrice) < 0 && !env.ownedAccounts.Has(from) {
 			// Pop the current low-priced transaction without shifting in the next from the account
-			log.Info(fmt.Sprintf("Transaction (%x) below gas price (tx=%v ask=%v). All sequential txs from this address(%x) will be ignored\n", tx.Hash().Bytes()[:4], common.CurrencyToString(tx.GasPrice()), common.CurrencyToString(gasPrice), from[:4]))
+			glog.V(logger.Info).Infof("Transaction (%x) below gas price (tx=%v ask=%v). All sequential txs from this address(%x) will be ignored\n", tx.Hash().Bytes()[:4], common.CurrencyToString(tx.GasPrice()), common.CurrencyToString(gasPrice), from[:4])
 
 			env.lowGasTxs = append(env.lowGasTxs, tx)
 			txs.Pop()
@@ -575,12 +579,12 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 		switch {
 		case core.IsGasLimitErr(err):
 			// Pop the current out-of-gas transaction without shifting in the next from the account
-			log.Trace(fmt.Sprintf("Gas limit reached for (%x) in this block. Continue to try smaller txs\n", from[:4]))
+			glog.V(logger.Detail).Infof("Gas limit reached for (%x) in this block. Continue to try smaller txs\n", from[:4])
 			txs.Pop()
 
 		case err != nil:
 			// Pop the current failed transaction without shifting in the next from the account
-			log.Trace(fmt.Sprintf("Transaction (%x) failed, will be removed: %v\n", tx.Hash().Bytes()[:4], err))
+			glog.V(logger.Detail).Infof("Transaction (%x) failed, will be removed: %v\n", tx.Hash().Bytes()[:4], err)
 			env.failedTxs = append(env.failedTxs, tx)
 			txs.Pop()
 
